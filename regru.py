@@ -19,22 +19,39 @@ API_BASE = "https://api.reg.ru/api/regru2"
 
 
 def load_credentials() -> tuple[str, str]:
-    """Читает REGRU_USERNAME/REGRU_PASSWORD из env, иначе из .env рядом со скриптом."""
-    env_file = Path(__file__).resolve().parent / ".env"
+    """Читает REGRU_USERNAME/REGRU_PASSWORD из env, иначе из .env (или .env.<profile>) рядом со скриптом.
+
+    Профиль определяется через --profile (ставит REGRU_PROFILE в env) либо
+    переменную окружения REGRU_PROFILE. Без профиля читается .env.
+    """
+    here = Path(__file__).resolve().parent
+    profile = os.environ.get("REGRU_PROFILE", "").strip()
+    env_file = here / (f".env.{profile}" if profile else ".env")
+    if profile and not env_file.exists():
+        sys.exit(f"ошибка: профиль '{profile}' не найден ({env_file} нет)")
+    # Для дефолтного .env допускаем отсутствие — credentials могут быть в окружении.
+    profile_env: dict[str, str] = {}
     if env_file.exists():
         for raw in env_file.read_text(encoding="utf-8").splitlines():
             line = raw.strip()
             if not line or line.startswith("#") or "=" not in line:
                 continue
             key, _, value = line.partition("=")
-            value = value.strip().strip('"').strip("'")
-            os.environ.setdefault(key.strip(), value)
-    user = os.environ.get("REGRU_USERNAME", "").strip()
-    pwd = os.environ.get("REGRU_PASSWORD", "").strip()
+            profile_env[key.strip()] = value.strip().strip('"').strip("'")
+    # При активном профиле его значения перебивают окружение, иначе наоборот.
+    if profile:
+        user = profile_env.get("REGRU_USERNAME", "").strip()
+        pwd = profile_env.get("REGRU_PASSWORD", "").strip()
+    else:
+        for k, v in profile_env.items():
+            os.environ.setdefault(k, v)
+        user = os.environ.get("REGRU_USERNAME", "").strip()
+        pwd = os.environ.get("REGRU_PASSWORD", "").strip()
     if not user or not pwd:
+        hint = f".env.{profile}" if profile else ".env"
         sys.exit(
-            "ошибка: не заданы REGRU_USERNAME / REGRU_PASSWORD.\n"
-            "скопируй .env.example -> .env и заполни (см. CLAUDE.md)"
+            f"ошибка: не заданы REGRU_USERNAME / REGRU_PASSWORD в {hint}.\n"
+            "скопируй .env.example -> .env (или .env.<profile>) и заполни"
         )
     return user, pwd
 
@@ -169,6 +186,11 @@ def build_parser() -> argparse.ArgumentParser:
         prog="regru",
         description="CLI для управления доменами и DNS на reg.ru через REG.API 2.0",
     )
+    p.add_argument(
+        "--profile",
+        metavar="NAME",
+        help="имя профиля; читает .env.<NAME> вместо .env (можно через REGRU_PROFILE)",
+    )
     sub = p.add_subparsers(dest="cmd", required=True)
 
     sub.add_parser("whoami", help="проверить аутентификацию (user/get_statistics)") \
@@ -218,6 +240,8 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     args = build_parser().parse_args()
+    if args.profile:
+        os.environ["REGRU_PROFILE"] = args.profile
     args.func(args)
 
 

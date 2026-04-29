@@ -1,5 +1,7 @@
 # Credentials — никогда не коммитить
 .env
+.env.*
+!.env.example
 
 # Python
 __pycache__/
